@@ -1,9 +1,7 @@
-streamlit
+streamlit>=1.35.0
 numpy
 pandas
 requests
 plotly
-tensorflow
-tensorflow_decision_forests
 joblib
 scikit-learn
