@@ -1,0 +1,9 @@
+streamlit>=1.35.0
+numpy
+pandas
+requests
+plotly
+tensorflow==2.18.0
+tensorflow_decision_forests==1.11.0
+joblib
+scikit-learn
