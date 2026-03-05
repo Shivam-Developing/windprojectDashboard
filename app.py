@@ -1,7 +1,5 @@
 # ============================================================
-# FROST Dashboard  |  app.py
-# Inference logic faithful to final_inference_wind.ipynb
-# Model backend: scikit-learn RandomForest (joblib) — no TF required
+# FROST Dashboard  |  app.py  — v3 (warnings fixed)
 # ============================================================
 import streamlit as st
 import numpy as np
@@ -30,7 +28,7 @@ h1,h2,h3{color:#58a6ff;}
 </style>""", unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════
-# 0. Load artefacts  (sklearn RF + scaler — both joblib)
+# 0. Load artefacts
 # ═══════════════════════════════════════════════════════════
 @st.cache_resource
 def load_artefacts():
@@ -67,7 +65,6 @@ def get_open_meteo_6h_forecast(lat: float, lon: float):
     wdirs = np.array(m["wind_direction_10m"],    dtype=float)
     temps = np.array(m["temperature_2m"],        dtype=float)
     times = m["time"]
-    # Exact slot selection from notebook
     idx = list(range(0, 4)) + [4, 5] + list(range(6, 10))
     raw = np.column_stack((winds[idx], feels[idx], wdirs[idx]))
     return raw, [times[i] for i in idx], temps[idx]
@@ -97,7 +94,7 @@ def to_feature_matrix(raw: np.ndarray) -> np.ndarray:
 FEATURE_NAMES = ["Wind_speed_ms","Ambient_temperature_C","direc_sin","direc_cos","Wind_chill_factor"]
 
 # ═══════════════════════════════════════════════════════════
-# 3. Inference  (sklearn RF — same logic as notebook)
+# 3. Inference
 # ═══════════════════════════════════════════════════════════
 def predict_ice(matrix, scaler, model):
     df_feat = pd.DataFrame(matrix, columns=FEATURE_NAMES)
@@ -194,15 +191,13 @@ with tab1:
             f'</div>', unsafe_allow_html=True)
         st.write("")
 
-        # Probability timeline chart
+        # Probability timeline
         fig_p = go.Figure()
         fig_p.add_trace(go.Scatter(
             x=list(range(1, len(probs)+1)), y=probs,
             fill="tozeroy", fillcolor="rgba(88,166,255,0.15)",
             line=dict(color="#58a6ff", width=2.5), mode="lines+markers",
-            marker=dict(
-                color=["#f85149" if p >= threshold else "#3fb950" for p in probs],
-                size=9),
+            marker=dict(color=["#f85149" if p >= threshold else "#3fb950" for p in probs], size=9),
             text=[f"Slot {i+1} | {t}<br>P={p:.3f} | {'🧊 ICE' if p>=threshold else '✅ No Ice'}"
                   for i,(t,p) in enumerate(zip(times, probs))],
             hoverinfo="text",
@@ -211,24 +206,20 @@ with tab1:
                         annotation_text=f"Threshold {threshold:.2f}")
         fig_p.update_layout(
             title="Slot-wise Icing Probability (6-Hour Horizon)",
-            xaxis_title="Slot", yaxis_title="P(icing)",
-            yaxis=dict(range=[0, 1.05]),
+            xaxis_title="Slot", yaxis_title="P(icing)", yaxis=dict(range=[0, 1.05]),
             paper_bgcolor="#161b22", plot_bgcolor="#0d1117",
             font_color="#c9d1d9", height=360)
         st.plotly_chart(fig_p, use_container_width=True)
 
-        # Temp + Wind chart
+        # Temp + Wind
         slots = list(range(1, len(times)+1))
         fig_tw = go.Figure()
-        fig_tw.add_trace(go.Scatter(
-            x=slots, y=amb_temps, name="Ambient Temp (°C)",
-            line=dict(color="#79c0ff", width=2)))
-        fig_tw.add_trace(go.Scatter(
-            x=slots, y=feat[:, 4], name="Wind Chill (°C)",
-            line=dict(color="#d2a8ff", dash="dot", width=2)))
-        fig_tw.add_trace(go.Bar(
-            x=slots, y=feat[:, 0], name="Wind Speed (m/s)",
-            marker_color="rgba(63,185,80,0.45)", yaxis="y2"))
+        fig_tw.add_trace(go.Scatter(x=slots, y=amb_temps, name="Ambient Temp (°C)",
+                                    line=dict(color="#79c0ff", width=2)))
+        fig_tw.add_trace(go.Scatter(x=slots, y=feat[:, 4], name="Wind Chill (°C)",
+                                    line=dict(color="#d2a8ff", dash="dot", width=2)))
+        fig_tw.add_trace(go.Bar(x=slots, y=feat[:, 0], name="Wind Speed (m/s)",
+                                marker_color="rgba(63,185,80,0.45)", yaxis="y2"))
         fig_tw.update_layout(
             title="Ambient Temp / Wind Chill / Wind Speed per Slot",
             xaxis_title="Slot",
@@ -239,34 +230,33 @@ with tab1:
             legend=dict(x=0, y=1.12, orientation="h"))
         st.plotly_chart(fig_tw, use_container_width=True)
 
-        # Slot-wise prediction table
+        # Slot table  — FIX: all columns pure float/str, no mixed types
         st.subheader("📋 Slot-wise Prediction Table")
         tbl = pd.DataFrame({
-            "Slot":         list(range(1, len(times)+1)),
-            "Time":         times,
-            "Wind(km/h)":   raw[:, 0].round(1),
-            "AppTemp(°C)":  raw[:, 1].round(1),
-            "Dir(°)":       raw[:, 2].round(1),
-            "Wind(m/s)":    feat[:, 0].round(2),
-            "AmbTemp(°C)":  amb_temps.round(1),
-            "dir_sin":      feat[:, 2].round(4),
-            "dir_cos":      feat[:, 3].round(4),
-            "WCF(°C)":      feat[:, 4].round(2),
-            "P(icing)":     probs.round(4),
-            "Prediction":   ["🧊 ICE" if p else "✅ No Ice" for p in preds],
+            "Slot":        [int(i) for i in range(1, len(times)+1)],
+            "Time":        times,
+            "Wind(km/h)":  [float(round(v,1)) for v in raw[:, 0]],
+            "AppTemp(°C)": [float(round(v,1)) for v in raw[:, 1]],
+            "Dir(°)":      [float(round(v,1)) for v in raw[:, 2]],
+            "Wind(m/s)":   [float(round(v,2)) for v in feat[:, 0]],
+            "AmbTemp(°C)": [float(round(v,1)) for v in amb_temps],
+            "dir_sin":     [float(round(v,4)) for v in feat[:, 2]],
+            "dir_cos":     [float(round(v,4)) for v in feat[:, 3]],
+            "WCF(°C)":     [float(round(v,2)) for v in feat[:, 4]],
+            "P(icing)":    [float(round(v,4)) for v in probs],
+            "Prediction":  ["🧊 ICE" if p else "✅ No Ice" for p in preds],
         })
-        st.dataframe(tbl, use_container_width=True, hide_index=True)
+        st.dataframe(tbl, width="stretch", hide_index=True)
 
-        # DEBUG expander
         with st.expander("🔍 DEBUG – Raw / Scaled matrices & probabilities"):
             st.text("RAW from Open-Meteo (km/h | apparent_temp °C | wind_dir °):")
             st.dataframe(
                 pd.DataFrame(raw, columns=["wind_kmh","apparent_temp_C","wind_dir_deg"]),
-                use_container_width=True)
+                width="stretch")
             st.text("Scaled matrix (after scaler.transform):")
             st.dataframe(
                 pd.DataFrame(scaled, columns=FEATURE_NAMES),
-                use_container_width=True)
+                width="stretch")
             st.text("Probabilities:")
             st.write(probs)
             st.text("Predictions (0=no, 1=yes):")
@@ -278,12 +268,10 @@ with tab1:
             "wind_ms":  feat[:, 0],
             "P(icing)": probs,
         })
-        fig_rose = px.bar_polar(
-            rose_df, r="wind_ms", theta="wind_dir", color="P(icing)",
-            color_continuous_scale=["#3fb950","#d29922","#f85149"],
-            title="Wind Rose — colored by icing probability")
-        fig_rose.update_layout(
-            paper_bgcolor="#161b22", font_color="#c9d1d9", height=420)
+        fig_rose = px.bar_polar(rose_df, r="wind_ms", theta="wind_dir", color="P(icing)",
+                                color_continuous_scale=["#3fb950","#d29922","#f85149"],
+                                title="Wind Rose — colored by icing probability")
+        fig_rose.update_layout(paper_bgcolor="#161b22", font_color="#c9d1d9", height=420)
         st.plotly_chart(fig_rose, use_container_width=True)
 
     else:
@@ -306,13 +294,12 @@ with tab2:
 
     c1, c2 = st.columns(2)
     with c1:
-        wind_kmh_in = st.number_input("💨 Wind Speed (km/h)",   value=32.0,  step=1.0, min_value=0.0)
-        app_temp_in = st.number_input("🌡️ Apparent Temp (°C)",  value=-12.0, step=0.5)
+        wind_kmh_in = st.number_input("💨 Wind Speed (km/h)",  value=32.0,  step=1.0, min_value=0.0)
+        app_temp_in = st.number_input("🌡️ Apparent Temp (°C)", value=-12.0, step=0.5)
     with c2:
         wdir_in = st.number_input("🧭 Wind Direction (°)", value=229.0, step=1.0,
                                    min_value=0.0, max_value=360.0)
 
-    # Compute features exactly as to_feature_matrix()
     wind_ms_s  = wind_kmh_in / 3.6
     rad_s      = math.radians(wdir_in)
     dir_sin_s  = math.sin(rad_s)
@@ -335,36 +322,24 @@ with tab2:
     m5.metric("WCF (°C)",    f"{wcf_s:.2f}")
 
     mat = np.array([[wind_ms_s, app_temp_in, dir_sin_s, dir_cos_s, wcf_s]])
-
     if MODEL_READY:
         sp, sp_arr, _ = predict_ice(mat, _scaler, _model)
         prob_s = float(sp_arr[0])
         pred_s = int(sp[0])
         lbl_s, css_s = risk_label(prob_s)
-
         st.markdown(
             f'<div class="{css_s}"><h3>{lbl_s} — P(icing) = {prob_s*100:.1f}%</h3>'
             f'<p><strong>{"🧊 ICE DETECTED" if pred_s else "✅ No Icing"}</strong></p>'
             f'</div>', unsafe_allow_html=True)
-
         fig_g = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=prob_s * 100,
+            mode="gauge+number", value=prob_s*100,
             title={"text": "Icing Probability (%)"},
-            gauge={
-                "axis":  {"range": [0, 100]},
-                "bar":   {"color": "#58a6ff"},
-                "steps": [
-                    {"range": [0,  35],  "color": "#0d1f14"},
-                    {"range": [35, 65],  "color": "#2d2008"},
-                    {"range": [65, 100], "color": "#2d1519"},
-                ],
-                "threshold": {
-                    "line": {"color": "white", "width": 3},
-                    "thickness": 0.75,
-                    "value": threshold * 100,
-                },
-            },
+            gauge={"axis": {"range": [0, 100]}, "bar": {"color": "#58a6ff"},
+                   "steps": [{"range": [0,  35],  "color": "#0d1f14"},
+                              {"range": [35, 65],  "color": "#2d2008"},
+                              {"range": [65, 100], "color": "#2d1519"}],
+                   "threshold": {"line": {"color": "white", "width": 3},
+                                 "thickness": 0.75, "value": threshold*100}},
         ))
         fig_g.update_layout(paper_bgcolor="#161b22", font_color="#c9d1d9", height=300)
         st.plotly_chart(fig_g, use_container_width=True)
@@ -372,17 +347,19 @@ with tab2:
         st.warning("Add model files to enable predictions. Feature engineering shown above is correct.")
 
 # ═══════════════════════════════════════════════════════════
-# TAB 3 – Model info
+# TAB 3 – Model info   FIX: all-string table to avoid Arrow type error
 # ═══════════════════════════════════════════════════════════
 with tab3:
     st.subheader("Classification Performance")
-    st.dataframe(pd.DataFrame({
+    # FIX: use pure strings in every cell to avoid pyarrow mixed-type error
+    perf = pd.DataFrame({
         "Class":     ["No Icing (0)", "Icing (1)", "Macro Avg", "Overall"],
-        "Precision": [1.00, 0.97, 0.98, "—"],
-        "Recall":    [0.97, 1.00, 0.98, "—"],
-        "F1-Score":  [0.98, 0.98, 0.98, "—"],
-        "Note":      ["", "", "Accuracy = 0.98", "ROC-AUC = 0.9985"],
-    }), use_container_width=True, hide_index=True)
+        "Precision": ["1.00",         "0.97",       "0.98",      "—"],
+        "Recall":    ["0.97",         "1.00",       "0.98",      "—"],
+        "F1-Score":  ["0.98",         "0.98",       "0.98",      "—"],
+        "Note":      ["",             "",           "Accuracy = 0.98", "ROC-AUC = 0.9985"],
+    })
+    st.dataframe(perf, width="stretch", hide_index=True)
 
     fi = pd.DataFrame({
         "Feature":    ["Rolling Avg Temp","Rolling Avg Wind","Ambient Temp",
@@ -392,9 +369,8 @@ with tab3:
     fig_fi = px.bar(fi, x="Importance", y="Feature", orientation="h",
                     color="Importance", color_continuous_scale="Blues",
                     title="Feature Importances (Permutation – INV_MEAN_MIN_DEPTH)")
-    fig_fi.update_layout(
-        paper_bgcolor="#161b22", plot_bgcolor="#0d1117",
-        font_color="#c9d1d9", height=360, showlegend=False)
+    fig_fi.update_layout(paper_bgcolor="#161b22", plot_bgcolor="#0d1117",
+                         font_color="#c9d1d9", height=360, showlegend=False)
     st.plotly_chart(fig_fi, use_container_width=True)
 
     st.subheader("⚙️ Feature Engineering Formulas")
@@ -409,11 +385,9 @@ with tab3:
         {"Location": "Norway – Tromsø",     "Latitude": 69.65, "Longitude":  18.96},
         {"Location": "Iceland – Reykjavik", "Latitude": 64.14, "Longitude": -21.94},
     ])
-    fig_map = px.scatter_geo(
-        sites, lat="Latitude", lon="Longitude", text="Location",
-        projection="natural earth", title="Paper Evaluation Sites")
-    fig_map.update_traces(textposition="top center",
-                          marker=dict(size=12, color="#58a6ff"))
+    fig_map = px.scatter_geo(sites, lat="Latitude", lon="Longitude", text="Location",
+                             projection="natural earth", title="Paper Evaluation Sites")
+    fig_map.update_traces(textposition="top center", marker=dict(size=12, color="#58a6ff"))
     fig_map.update_layout(
         paper_bgcolor="#161b22", font_color="#c9d1d9",
         geo=dict(bgcolor="#0d1117", showland=True, landcolor="#21262d",
